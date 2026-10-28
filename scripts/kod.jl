@@ -84,6 +84,186 @@ function gen_ham_xxz(L::Int, J::Real, Delta::Real, PBC::Bool, baza_int::Vector{I
     return H
 end
 
+# =============================================================================
+# STAN POCZĄTKOWY - ŚCIANKA DOMENOWA
+# =============================================================================
+
+function gen_stan_sciany(L::Int, baza_int, indeks_odwrotny)
+
+    iseven(L) || error("Sciana domenowa wymaga parzystego L")
+
+    # Pierwsza połowa spinów UP, druga połowa DOWN.
+    # Spin na pozycji 1 odpowiada najmniej znaczącemu bitowi.
+    # Dla L=6: stan 000111, czyli fizycznie ↑↑↑↓↓↓.
+
+    state_sciana = (1 << (L ÷ 2)) - 1
+
+    haskey(indeks_odwrotny, state_sciana) ||
+        error("Stan sciany nie nalezy do wybranego sektora")
+
+    indeks_sciany = indeks_odwrotny[state_sciana]
+
+    # Stan początkowy w bazie Hamiltonianu
+    psi = zeros(ComplexF64, length(baza_int))
+    psi[indeks_sciany] = 1.0 + 0im
+
+    return psi
+end
+
+# =============================================================================
+# OPERATORY LOKALNE Sz - ICH ELEMENTY DIAGONALNE
+# =============================================================================
+
+function gen_Sz_diag(L::Int, baza_int)
+
+    ile_stanow = length(baza_int)
+
+    # Wiersze = pozycje spinów
+    # Kolumny = stany bazowe
+    Sz_diag = zeros(Float64, L, ile_stanow)
+
+    for (k, state) in enumerate(baza_int)
+
+        for site in 1:L
+
+            spin = (state >> (site - 1)) & 1
+
+            if spin == 1
+                Sz_diag[site, k] = 0.5
+            else
+                Sz_diag[site, k] = -0.5
+            end
+        end
+    end
+
+    return Sz_diag
+end
+
+
+# =============================================================================
+# EWOLUCJA CZASOWA
+# =============================================================================
+
+function ewolucja_czasowa(H, psi0, Sz_diag, t_values)
+
+    ile_stanow = length(psi0)
+    L = size(Sz_diag, 1)
+    nt = length(t_values)
+
+    dt = t_values[2] - t_values[1]
+
+    # Macierz jednostkowa
+    Id = spdiagm(0 => ones(Float64, ile_stanow))
+
+    # Metoda Cranka-Nicolsona:
+    # (I + i*dt*H/2) psi(t+dt) = (I - i*dt*H/2) psi(t)
+
+    A = Id + (1im * dt / 2) * H
+    B = Id - (1im * dt / 2) * H
+
+    # Faktoryzacja wykonywana tylko raz
+    F = lu(A)
+
+    psi = copy(psi0)
+
+    # Wyniki: wiersze = czas, kolumny = pozycja spinu
+    Sz_t = zeros(Float64, nt, L)
+    Sz_total_t = zeros(Float64, nt)
+
+    max_blad_normy = 0.0
+
+    for it in 1:nt
+
+        # Prawdopodobieństwa poszczególnych stanów bazowych
+        prawdopodobienstwa = abs2.(psi)
+
+        # <Sz_i(t)> dla wszystkich spinów
+        Sz_t[it, :] .= Sz_diag * prawdopodobienstwa
+
+        # Całkowita magnetyzacja
+        Sz_total_t[it] = sum(Sz_t[it, :])
+
+        # Kontrola normy funkcji falowej
+        max_blad_normy = max(
+            max_blad_normy,
+            abs(norm(psi) - 1.0)
+        )
+
+        # Przejście do następnej chwili czasu
+        if it < nt
+            psi = F \ (B * psi)
+        end
+    end
+
+    println("Maksymalny blad normy: ", max_blad_normy)
+    println("Sz_total na koncu: ", Sz_total_t[end])
+
+    return Sz_t, Sz_total_t
+end
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+function main()
+
+    J = 1.0
+
+    # Ścianka domenowa ma całkowitą magnetyzację zero
+    mag = 0
+
+    PBC = false
+
+    Delta_values = [0.5, 1.0, 2.0]
+    L_values = [2, 4, 6, 8, 10, 12, 14]
+
+    # PARAMETRY CZASU
+    t_min = 0.0
+    t_max = 20.0
+    nt = 201
+
+    t_values = collect(range(t_min, t_max, length=nt))
+
+    # Pętla po długościach łańcucha
+    for L in L_values
+
+        baza_int, baza_bit, indeks_odwrotny =
+            gen_baza_xxz(L; mag=mag)
+
+        # Stan początkowy
+        psi0 = gen_stan_sciany(L, baza_int, indeks_odwrotny)
+
+        # Elementy diagonalne lokalnych operatorów Sz
+        Sz_diag = gen_Sz_diag(L, baza_int)
+
+        # Pętla po anizotropiach
+        for Delta in Delta_values
+
+            println("\n--------------------------------")
+            println("L = ", L, " | Delta = ", Delta)
+            println("--------------------------------")
+
+            H = gen_ham_xxz(
+                L, J, Delta, PBC,
+                baza_int, indeks_odwrotny
+            )
+
+            # Ewolucja i wartości oczekiwane
+            Sz_t, Sz_total_t = ewolucja_czasowa(
+                H, psi0, Sz_diag, t_values
+            )
+
+            # Kolumny: t, Sz_1, Sz_2, ..., Sz_L, Sz_total
+            wyniki = hcat(t_values, Sz_t, Sz_total_t)
+
+            filename = "Sz_t_PBC$(PBC)_L$(L)_J$(J)_Delta$(Delta)_mag$(mag)_tmax$(t_max)_nt$(nt)"
+
+            save_data(wyniki, filename)
+        end
+    end
+end
+
 # Zapis do pliku .data
 function save_data(data, filename)
     folder = raw"C:\Users\aleks\Desktop\PWR\Numeryczne metody badania układów kwantowych\Pro_2_XXZ_pojemność_cieplna\data"
@@ -96,8 +276,8 @@ end
 
 function main()
     J = 1.0
-    # mag = :all
-    mag = 0
+    mag = :all
+    # mag = 0
     PBC = false
 
     Delta_values = [0.5, 1.0, 2.0]
@@ -106,56 +286,48 @@ function main()
     L_values = [2, 4, 6, 8, 10, 12, 14]
     # L_values = [2]
 
-    for Delta in Delta_values
-        #tabela na maksima, format: L, max_Cv, T_Cv_max
-        wyniki_max_Cv = zeros(Float64, length(L_values), 3)
+    # PARAMETRY CZASU
+    t_min = 0.0
+    t_max = 20.0
+    nt = 201
+    t_values = collect(range(t_min, t_max, length=nt))
 
-        for (idx_L, L_x) in enumerate(L_values)
-            #Diagonalizacja
-            println("Obliczenia: Delta = $Delta, L = $L_x")
-            baza_int, baza_bit, indeks_odwrotny = gen_baza_xxz(L_x; mag)
-            #save_data(baza_bit, "baza_PBC$(PBC)_L_x$(L_x)_Delta$(Delta)_J$(J)_mag$(mag)")
-            H = gen_ham_xxz(L_x, J, Delta, PBC, baza_int, indeks_odwrotny)
-            #save_data(H, "ham_PBC$(PBC)_L_x$(L_x)_Delta$(Delta)_J$(J)_mag$(mag)")
-            eig = eigen(Symmetric(H))
-            wartosci_wlasne = eig.values
-            #wektory_wlasne = eig.vectors
-            save_data(wartosci_wlasne, "eigenvalues_PBC$(PBC)_L_x$(L_x)_Delta$(Delta)_J$(J)_mag$(mag)")
+    # Pętla po długościach łańcucha
+    for L in L_values
 
-            #Pojemność Cieplna Cv
-            E = wartosci_wlasne
-            E0 = wartosci_wlasne[1]
-            ile_T = 200
-            T_tablica = collect(range(0.05, 2.0, ile_T))
-            wyniki_Cv = zeros(Float64, ile_T, 4)
-            for i in 1:ile_T
-                T = T_tablica[i]
-                #suma statystyczna
-                w = exp.(-(E .- E0) ./ T)
-                Z = sum(w)
-                #średnia energia <E>
-                E_mean = sum(E .* w) / Z
-                #średni kwadrat energii <E²>
-                E2_mean = sum(E.^2 .* w) / Z
-                #pojemność cieplna to już w pełni z wekotrami
-                Cv = (E2_mean - E_mean^2) / T^2
-                #tablica wyników:
-                wyniki_Cv[i, 1] = T
-                wyniki_Cv[i, 2] = E_mean
-                wyniki_Cv[i, 3] = E2_mean
-                wyniki_Cv[i, 4] = Cv
-            end
-            save_data(wyniki_Cv, "Cv_PBC$(PBC)_L_x$(L_x)_Delta$(Delta)_J$(J)_mag$(mag)")
+        baza_int, baza_bit, indeks_odwrotny =
+            gen_baza_xxz(L; mag=mag)
 
-            #znajdowanie maksium 
-            max_Cv, idx_max = findmax(wyniki_Cv[:, 4])
-            T_Cv_max = T_tablica[idx_max]
-            #zapis do tabeli
-            wyniki_max_Cv[idx_L, 1] = L_x
-            wyniki_max_Cv[idx_L, 2] = max_Cv
-            wyniki_max_Cv[idx_L, 3] = T_Cv_max
+        # Stan początkowy
+        psi0 = gen_stan_sciany(L, baza_int, indeks_odwrotny)
+
+        # Elementy diagonalne lokalnych operatorów Sz
+        Sz_diag = gen_Sz_diag(L, baza_int)
+
+        # Pętla po anizotropiach
+        for Delta in Delta_values
+
+            println("\n--------------------------------")
+            println("L = ", L, " | Delta = ", Delta)
+            println("--------------------------------")
+
+            H = gen_ham_xxz(
+                L, J, Delta, PBC,
+                baza_int, indeks_odwrotny
+            )
+
+            # Ewolucja i wartości oczekiwane
+            Sz_t, Sz_total_t = ewolucja_czasowa(
+                H, psi0, Sz_diag, t_values
+            )
+
+            # Kolumny: t, Sz_1, Sz_2, ..., Sz_L, Sz_total
+            wyniki = hcat(t_values, Sz_t, Sz_total_t)
+
+            filename = "Sz_t_PBC$(PBC)_L$(L)_J$(J)_Delta$(Delta)_mag$(mag)_tmax$(t_max)_nt$(nt)"
+
+            save_data(wyniki, filename)
         end
-        save_data(wyniki_max_Cv, "Cv_max_PBC$(PBC)_Delta$(Delta)_J$(J)_mag$(mag)")
     end
 end
 
