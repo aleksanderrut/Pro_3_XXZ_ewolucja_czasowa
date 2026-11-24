@@ -12,8 +12,16 @@ FOLDER_DANE = Path(
     r"C:\Users\aleks\Desktop\PWR\Numeryczne metody badania układów kwantowych\Pro_3_XXZ_ewolucja_czasowa\data"
 )
 
+# Folder na wykresy
+FOLDER_WYKRESY = FOLDER_DANE.parent / "plots"
+FOLDER_WYKRESY.mkdir(parents=True, exist_ok=True)
+
 # Liczba krokow czasowych - wpisywana recznie
-nt = 201
+nt = 301
+
+# Sektor magnetyzacji
+#mag = "all"
+mag = "0"
 
 # Skala kolorow
 vmin = -0.5
@@ -21,8 +29,18 @@ vmax = 0.5
 
 cmap = "RdBu_r"
 
+# PARAMETRY ROZMYCIA GAUSSOWSKIEGO
+ROZMYCIE = True
+
+SIGMA_T = 0.5
+SIGMA_I = 0.5
+
+GESTOSC = 20
+NORMALIZACJA = True
+
 # Zapis wykresow
 SAVE_PLOTS = True
+
 
 # =============================================================================
 # ODCZYT PARAMETROW Z NAZWY PLIKU
@@ -92,20 +110,83 @@ def plot_evolution(filename):
     x_edges = np.arange(0.5, L + 1.5, 1)
 
     # =========================================================================
+    # SUPERPOZYCJA FUNKCJI GAUSSA
+    # =========================================================================
+
+    if ROZMYCIE:
+
+        x = np.arange(1, L + 1)
+
+        # Zageszczona siatka przestrzenna i czasowa
+        x_plot = np.linspace(
+            x_edges[0], x_edges[-1], L * GESTOSC
+        )
+
+        t_plot = np.linspace(
+            t_edges[0], t_edges[-1], len(t) * GESTOSC
+        )
+
+        # Sredni krok czasowy
+        dt_mean = np.mean(np.diff(t)) if len(t) > 1 else 1.0
+
+        # Funkcje Gaussa w kierunku przestrzennym
+        G_x = np.exp(
+            -(x_plot[:, None] - x[None, :])**2
+            / (2 * SIGMA_I**2)
+        )
+
+        # Funkcje Gaussa w kierunku czasowym
+        G_t = np.exp(
+            -(t_plot[:, None] - t[None, :])**2
+            / (2 * (SIGMA_T * dt_mean)**2)
+        )
+
+        # Superpozycja wszystkich dwuwymiarowych Gaussow
+        Sz_plot = G_t @ Sz @ G_x.T
+
+        # Opcjonalna normalizacja sumy wag
+        if NORMALIZACJA:
+
+            norma = (
+                G_t.sum(axis=1)[:, None]
+                * G_x.sum(axis=1)[None, :]
+            )
+
+            Sz_plot = np.divide(
+                Sz_plot,
+                norma,
+                out=np.zeros_like(Sz_plot),
+                where=norma > 0
+            )
+
+        shading_plot = "auto"
+
+    else:
+
+        x_plot = x_edges
+        t_plot = t_edges
+        Sz_plot = Sz
+
+        shading_plot = "flat"
+
+    # =========================================================================
     # WYKRES
     # =========================================================================
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
     pcm = ax.pcolormesh(
-        x_edges,
-        t_edges,
-        Sz,
+        x_plot,
+        t_plot,
+        Sz_plot,
         cmap=cmap,
         vmin=vmin,
         vmax=vmax,
-        shading="flat"
+        shading=shading_plot
     )
+
+    ax.set_xlim(x_edges[0], x_edges[-1])
+    ax.set_ylim(t_edges[0], t_edges[-1])
 
     # Colorbar
     cbar = fig.colorbar(
@@ -128,7 +209,7 @@ def plot_evolution(filename):
     # Tytul
     ax.set_title(
         rf"$L={L},\ \Delta={Delta},\ J={J},\ "
-        rf"\mathrm{{PBC}}={PBC},\ n_t={nt}$",
+        rf"\mathrm{{mag}}={mag},\ \mathrm{{PBC}}={PBC},\ n_t={nt}$",
         fontsize=14,
         pad=12
     )
@@ -137,14 +218,23 @@ def plot_evolution(filename):
 
     fig.tight_layout()
 
-    # Zapis
+    # =========================================================================
+    # ZAPIS WYKRESU
+    # =========================================================================
+
     if SAVE_PLOTS:
-        output_path = filename.with_suffix(".png")
+
+        if ROZMYCIE:
+            output_path = FOLDER_WYKRESY / f"{filename.stem}_Gauss.png"
+        else:
+            output_path = FOLDER_WYKRESY / f"{filename.stem}.png"
+
         fig.savefig(
             output_path,
             dpi=300,
             bbox_inches="tight"
         )
+
         print(f"Zapisano: {output_path}")
 
     print(
