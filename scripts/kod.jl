@@ -113,6 +113,29 @@ function gen_Sz_diag(L::Int, baza_int)
     return Sz_diag
 end
 
+# Dobieranie beta na podstawie energii poczatkowej
+function dobierz_beta(energie, epsilon_init, L)
+    beta_left = -1.0
+    beta_right = 1.0
+    #Metoda bijekscji
+    for _ in 1:300
+        beta = (beta_left + beta_right) / 2
+        #Energia kanoniczna dla aktualnego beta
+        wagi = exp.(-beta .* energie)
+        epsilon = sum(energie .* wagi) / (L * sum(wagi))
+        if abs(epsilon - epsilon_init) < 1e-12
+            return beta
+        end
+
+        if epsilon > epsilon_init
+            beta_left = beta
+        else
+            beta_right = beta
+        end
+    end
+    return (beta_left + beta_right) / 2
+end
+
 # Zapis do pliku .data
 function save_data(data, filename)
     folder = raw"C:\Users\aleks\Desktop\PWR\Numeryczne metody badania układów kwantowych\Pro_3_XXZ_ewolucja_czasowa\data"
@@ -152,13 +175,22 @@ function main()
             psi0 = gen_stan_sciany(L, baza_int, indeks_odwrotny)
             Sz_diag = gen_Sz_diag(L, baza_int) # macierz opertorów lokalnych S^z
 
-            println("Diagonalizacja Hamiltonianu...")
+            println("Diagonalizacja...")
             diago = eigen(Symmetric(H))
             energie = diago.values
             wektory = diago.vectors
 
             wsp = wektory' * psi0 # stan w bazie własnej Hamiltonianu
+            
             wyniki = zeros(Float64, nt, L + 1) # macierz na wyniki
+            wyniki_energia = zeros(Float64, nt, 4) # macierz na  wyniki zanlezionych T
+
+            epsilon_init = sum(abs2.(wsp) .* energie) / L # Energia poczatkowa na jeden spin
+            beta = dobierz_beta(energie, epsilon_init, L) #Wyzanczaenie tempertury
+            T = abs(beta) < 1e-12 ? Inf : 1 / beta
+            println("Energia poczatkowa na spin = ", epsilon_init)
+            println("Beta = ", beta) 
+            println("Temperatura T = ", T)   
 
             for (k, t) in enumerate(t_values)
                 psi_t = wektory * (wsp .* exp.(-1im .* energie .* t))
@@ -167,9 +199,19 @@ function main()
                 # Zapis do macierrzy
                 wyniki[k, 1] = t
                 wyniki[k, 2:end] = Sz_t
+
+                # Srednia energia na spin w chwili t
+                epsilon_t = sum(abs2.(wsp .* exp.(-1im .* energie .* t)) .* energie) / L
+                # Zapis do macierrzy
+                wyniki_energia[k, 1] = t
+                wyniki_energia[k, 2] = epsilon_t
+                wyniki_energia[k, 3] = beta
+                wyniki_energia[k, 4] = T
             end
             filename = "Sz_sciana_L$(L)_Delta$(Delta)_J$(J)_PBC$(PBC)"
             save_data(wyniki, filename)
+            filename_energia = "Energia_L$(L)_Delta$(Delta)_J$(J)_PBC$(PBC)"
+            save_data(wyniki_energia, filename_energia)
         end
     end
 end
