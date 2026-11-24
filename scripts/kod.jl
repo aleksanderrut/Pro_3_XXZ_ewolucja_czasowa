@@ -115,48 +115,27 @@ end
 
 # Dobieranie beta na podstawie energii początkowej
 function dobierz_beta(energie, epsilon_init, L)
-
     beta_left = -100.0
     beta_right = 100.0
     tol = 1e-6
-
     # Energia kanoniczna dla zadanego beta
     function energia_kanoniczna(beta)
         x = -beta .* energie
         wagi = exp.(x .- maximum(x))
         return sum(energie .* wagi) / (L * sum(wagi))
     end
-
-    # Sprawdzenie zakresu bisekcji
-    if !(energia_kanoniczna(beta_right) <= epsilon_init <=
-         energia_kanoniczna(beta_left))
-        error("Energia początkowa poza zakresem bisekcji")
-    end
-
-    # Wartości początkowe
+    # Metoda bisekcji - rozwiązanie rówania
     beta = (beta_left + beta_right) / 2
-    epsilon = energia_kanoniczna(beta)
-
-    # Metoda bisekcji
+    epsilon = energia_kanoniczna(beta) #definicja funkcji = 0
     while abs(epsilon - epsilon_init) > tol
-
         if epsilon > epsilon_init
             beta_left = beta
         else
             beta_right = beta
         end
-
         beta = (beta_left + beta_right) / 2
         epsilon = energia_kanoniczna(beta)
-
-        # Zabezpieczenie przed nieskończoną pętlą
-        if abs(beta_right - beta_left) < 1e-12 &&
-           abs(epsilon - epsilon_init) > tol
-            error("Nie osiągnięto wymaganej dokładności")
-        end
-
     end
-
     return beta
 end
 
@@ -171,30 +150,27 @@ function save_data(data, filename)
 end
 
 function main()
-
     # PARAMETRY MODELU
     J = 1.0
     # mag = :all
     mag = 0
-    PBC = false
-
+    PBC = true
     Delta_values = [0.0, 1.0, 2.0]
+    #Delta_values = [0.0]
     L_values = [14]
-
+    #L_values = [14,15,16]
     # PARAMETRY CZASU
     t_min = 0.0
     t_max = 30.0
     nt = 301
     t_values = collect(range(t_min, t_max, length=nt))
 
-    # MACIERZ NA PUNKTY POCZĄTKOWE
-    liczba_punktow = length(Delta_values) * length(L_values)
-    wyniki_T = zeros(Float64, liczba_punktow, 5)
+    # MACIERZ NA WYNIKI SZUKANIA TEMPERATUR
+    wyniki_T = zeros(Float64, length(Delta_values) * length(L_values), 5)
     indeks_T = 1
-
+    # PĘTLA po prametrach
     for Delta in Delta_values
         for L in L_values
-
             println("L = $L, Delta = $Delta")
             println()
 
@@ -204,98 +180,78 @@ function main()
             Sz_diag = gen_Sz_diag(L, baza_int)
 
             println("Diagonalizacja...")
-
             diago = eigen(Symmetric(H))
             energie = diago.values
             wektory = diago.vectors
-
-            wsp = wektory' * psi0
+            wsp = wektory' * psi0 # stan początkowy zapisany w bazie energii własnych
 
             # MACIERZE NA WYNIKI
             wyniki = zeros(Float64, nt, L + 1)
             wyniki_energia = zeros(Float64, nt, 2)
-
             # ENERGIA POCZĄTKOWA I WYZNACZENIE TEMPERATURY
             epsilon_init = sum(abs2.(wsp) .* energie) / L
-
-            beta = dobierz_beta(energie, epsilon_init, L)
+            beta = dobierz_beta(energie, epsilon_init, L) # urzycie bisekcji abu znaleśc bete
             T = abs(beta) < 1e-12 ? Inf : 1 / beta
-
             println("Energia początkowa na spin = ", epsilon_init)
             println("Beta = ", beta)
             println("Temperatura T = ", T)
 
-            # ZAPIS PUNKTU POCZĄTKOWEGO DO MACIERZY
+            # ZAPIS punktu temperatury i podobnych do pliku
             wyniki_T[indeks_T, 1] = T
             wyniki_T[indeks_T, 2] = epsilon_init
             wyniki_T[indeks_T, 3] = L
             wyniki_T[indeks_T, 4] = Delta
             wyniki_T[indeks_T, 5] = beta
-
             indeks_T += 1
 
-            # EWOLUCJA CZASOWA
+            # właściwa ewolucja czasowa
             for (k, t) in enumerate(t_values)
-
-                wsp_t = wsp .* exp.(-1im .* energie .* t)
+                wsp_t = wsp .* exp.(-1im .* energie .* t) #e do iE_nt zeby talko raz to liczyć
+                
+                # Ewolucja ściany domenowej
                 psi_t = wektory * wsp_t
-
-                prawdopodobienstwa = abs2.(psi_t)
-
-                # Lokalne wartości oczekiwane Sz
-                Sz_t = Sz_diag * prawdopodobienstwa
-
+                prawdopodobienstwa = abs2.(psi_t) # jakie stany są w aktualnym stanie układu Sz_diag - policzone wcześniej
+                Sz_t = Sz_diag * prawdopodobienstwa # Lokalne wartości oczekiwane Sz 
                 wyniki[k, 1] = t
                 wyniki[k, 2:end] = Sz_t
 
                 # Średnia energia na spin w chwili t
                 epsilon_t = sum(abs2.(wsp_t) .* energie) / L
-
                 wyniki_energia[k, 1] = t
                 wyniki_energia[k, 2] = epsilon_t
-
             end
 
             # ZAPIS WYNIKÓW EWOLUCJI
             filename = "Sz_sciana_L$(L)_Delta$(Delta)_J$(J)_PBC$(PBC)"
             save_data(wyniki, filename)
-
             filename_energia = "Energia_L$(L)_Delta$(Delta)_J$(J)_PBC$(PBC)"
             save_data(wyniki_energia, filename_energia)
 
-                T_min = 0.01
-                T_max = 3.0
-                n_plot = 601
+            #Tutaj cześć z funkcjami średniej wartość energii od temperatury
+            T_min = 0.01
+            T_max = 3.0
+            n_plot = 601
+            T_values_neg = range(-T_max, -T_min, length=n_plot)
+            T_values_pos = range(T_min, T_max, length=n_plot)
+            T_values = vcat(T_values_neg, T_values_pos) #jeden wspołny przedział
 
-                T_values_neg = range(-T_max, -T_min, length=n_plot)
-                T_values_pos = range(T_min, T_max, length=n_plot)
-                T_values = vcat(T_values_neg, T_values_pos)
+            wyniki_E_T = zeros(Float64, length(T_values), 2)
+            for (k, T_plot) in enumerate(T_values)
+                x = -(1/T_plot) .* energie
+                wagi = exp.(x .- maximum(x))
+                Z = sum(wagi)
+                epsilon = sum(energie .* wagi) / (L * Z)
 
-                wyniki_E_T = zeros(Float64, length(T_values), 2)
-
-                for (k, T_plot) in enumerate(T_values)
-
-                    beta_plot = 1 / T_plot
-
-                    x = -beta_plot .* energie
-                    wagi = exp.(x .- maximum(x))
-
-                    epsilon = sum(energie .* wagi) / (L * sum(wagi))
-
-                    wyniki_E_T[k, 1] = T_plot
-                    wyniki_E_T[k, 2] = epsilon
-
+                wyniki_E_T[k, 1] = T_plot
+                wyniki_E_T[k, 2] = epsilon
                 filename_E_T = "Energia_vs_T_L$(L)_Delta$(Delta)_J$(J)_mag$(mag)_PBC$(PBC)"
                 save_data(wyniki_E_T, filename_E_T)
-
             end
         end
     end
-
-    # ZAPIS WSZYSTKICH PUNKTÓW POCZĄTKOWYCH
+    # ZAPIS T zanlezionych na początku pętli
     filename_T = "Energia_init_vs_T_J$(J)_mag$(mag)_PBC$(PBC)"
     save_data(wyniki_T, filename_T)
-
 end
 
 main()

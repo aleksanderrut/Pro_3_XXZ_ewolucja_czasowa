@@ -10,7 +10,7 @@ FOLDER = Path(
 L = 14
 Delta_values = [0.0, 1.0, 2.0]
 J = 1.0
-mag = "all"
+mag = 0
 PBC = "false"
 
 # ZAKRES OSI X
@@ -93,7 +93,6 @@ ax.set_title(
 
 ax.grid(alpha=0.3)
 ax.legend(fontsize=13)
-
 plt.tight_layout()
 
 # ZAPIS WYKRESU
