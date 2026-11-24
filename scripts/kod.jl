@@ -98,9 +98,7 @@ end
 # Operatory lokalne Sz w bazie Hamiltonianu
 function gen_Sz_diag(L::Int, baza_int)
     ile_stanow = length(baza_int)
-
-    # Wiersze = pozycje spinów
-    # Kolumny = stany bazowe
+    # Wiersze = pozycje spinów; Kolumny = stany bazowe
     Sz_diag = zeros(Float64, L, ile_stanow)
     for (k, state) in enumerate(baza_int)
         for site in 1:L
@@ -117,7 +115,7 @@ end
 
 # Zapis do pliku .data
 function save_data(data, filename)
-    folder = raw"C:\Users\aleks\Desktop\PWR\Numeryczne metody badania układów kwantowych\Pro_2_XXZ_pojemność_cieplna\data"
+    folder = raw"C:\Users\aleks\Desktop\PWR\Numeryczne metody badania układów kwantowych\Pro_3_XXZ_ewolucja_czasowa\data"
     filename *= ".data"
     filepath = joinpath(folder, filename)
     writedlm(filepath, data)
@@ -133,10 +131,10 @@ function main()
     # mag = 0
     PBC = false
 
-    Delta_values = [0.5, 1.0, 2.0]
+    Delta_values = [0.0, 1.0, 2.0]
     # Delta_values = [1.0]
-    L_values = [2, 4, 6, 8, 10, 12, 14]
-    # L_values = [2]
+    #L_values = [2, 4, 6, 8, 10, 12, 14]
+    L_values = [12]
 
     # PARAMETRY CZASU
     t_min = 0.0
@@ -146,10 +144,8 @@ function main()
 
     for Delta in Delta_values
         for L in L_values
-            println("/n")
-            println("======================================")
             println("L = $L, Delta = $Delta")
-            println("======================================")
+            println("/n")
 
             baza_int, baza_bit, indeks_odwrotny = gen_baza_xxz(L; mag=0)
             H = gen_ham_xxz(L, J, Delta, PBC, baza_int, indeks_odwrotny)
